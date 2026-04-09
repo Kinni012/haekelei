@@ -28,18 +28,16 @@ const { title } = Astro.props;
         }
 
         window.addEventListener('popstate', () => {
-          // Always jump fully to the very top (no smooth scrolling).
+          // First "Back" within this page: jump to absolute top and stay.
+          // Because we pushed a duplicate state on load, this popstate
+          // only moves between two entries with the same URL/document,
+          // so we don't need to push again here. A second Back will then
+          // leave the page normally.
           const doc = document.documentElement;
           const body = document.body;
           if (doc) doc.scrollTop = 0;
           if (body) body.scrollTop = 0;
           window.scrollTo(0, 0);
-
-          try {
-            history.pushState({ __scrollTopOnBack: true }, '', location.href);
-          } catch {
-            // Ignore.
-          }
         });
       })();
     </script>
