@@ -27,32 +27,29 @@ const { title } = Astro.props;
         // back/forward cache without re-running scripts. To keep behavior
         // consistent, we (re)initialize the handler on page show.
 
-        function isArmed() {
-          const st = history.state;
-          return !!(st && typeof st === 'object' && st.__scrollTopOnBack === true);
-        }
-
-        function armIfNeeded() {
-          if (isArmed()) return;
-          try {
-            history.pushState({ __scrollTopOnBack: true }, '', location.href);
-          } catch {
-            // Ignore environments where history state is unavailable.
-          }
-        }
-
         function initBackScrollHandler() {
           if (window.__backScrollHandlerInitialized) return;
           window.__backScrollHandlerInitialized = true;
 
-          // Ensure we have a duplicate entry to intercept Back when scrolled.
-          armIfNeeded();
+          function ensureSentinelEntry() {
+            const st = history.state;
+            const hasSentinel = !!(st && typeof st === 'object' && st.__backTopSentinel === true);
+            if (hasSentinel) return;
+            try {
+              history.pushState({ __backTopSentinel: true }, '', location.href);
+            } catch {
+              // Ignore environments where history state is unavailable.
+            }
+          }
 
-          let skipping = false;
+          // Ensure we have a duplicate entry to intercept Back.
+          ensureSentinelEntry();
+
+          let isAutoExiting = false;
 
           window.addEventListener('popstate', () => {
-            if (skipping) {
-              skipping = false;
+            if (isAutoExiting) {
+              isAutoExiting = false;
               return;
             }
 
@@ -67,28 +64,25 @@ const { title } = Astro.props;
               if (body) body.scrollTop = 0;
               window.scrollTo(0, 0);
 
-              // Re-arm the "stay-on-page" behavior while user is scrolled down.
-              armIfNeeded();
+              // Stay on this page by restoring the sentinel entry.
+              ensureSentinelEntry();
               return;
             }
 
             // At the very top: leave immediately (no "double back").
-            // If we're currently stepping from the armed duplicate entry to the
-            // original entry, go back one more time to actually leave.
-            if (isArmed()) {
-              skipping = true;
-              history.back();
-            }
+            // At this point we've just popped from our sentinel entry to the
+            // previous entry. Trigger one more Back to actually leave.
+            isAutoExiting = true;
+            history.back();
+          });
+
+          // Re-arm when returning from bfcache or history restores.
+          window.addEventListener('pageshow', () => {
+            ensureSentinelEntry();
           });
         }
 
         initBackScrollHandler();
-        window.addEventListener('pageshow', () => {
-          // When restored from back/forward cache, scripts might not re-run.
-          // Re-arm the history entry in case we returned to an unarmed state.
-          armIfNeeded();
-          initBackScrollHandler();
-        });
       })();
     </script>
   </body>
