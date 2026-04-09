@@ -28,8 +28,8 @@ const { title } = Astro.props;
         // consistent, we (re)initialize the handler on page show.
 
         function initBackScrollHandler() {
-          if ((window as any).__backScrollHandlerInitialized) return;
-          (window as any).__backScrollHandlerInitialized = true;
+          if (window.__backScrollHandlerInitialized) return;
+          window.__backScrollHandlerInitialized = true;
 
           try {
             history.pushState({ __scrollTopOnBack: true }, '', location.href);
