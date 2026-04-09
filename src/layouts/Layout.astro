@@ -19,25 +19,49 @@ const { title } = Astro.props;
     <slot />
     <script is:inline>
       (() => {
-        // Make the first "Back" gesture scroll to top instead of leaving.
-        // If already at the top, the next Back behaves normally.
+        // Mobile back-button / back-gesture handling:
+        // - If scrolled down, pressing Back should jump to absolute top (0,0) and stay.
+        // - If already at absolute top, pressing Back should leave normally.
         try {
           history.pushState({ __scrollTopOnBack: true }, '', location.href);
         } catch {
           // Ignore environments where history state is unavailable.
         }
 
+        let isExiting = false;
+
         window.addEventListener('popstate', () => {
-          // First "Back" within this page: jump to absolute top and stay.
-          // Because we pushed a duplicate state on load, this popstate
-          // only moves between two entries with the same URL/document,
-          // so we don't need to push again here. A second Back will then
-          // leave the page normally.
-          const doc = document.documentElement;
-          const body = document.body;
-          if (doc) doc.scrollTop = 0;
-          if (body) body.scrollTop = 0;
-          window.scrollTo(0, 0);
+          if (isExiting) {
+            isExiting = false;
+            return;
+          }
+
+          const scrollY = window.scrollY || 0;
+          const atTop = scrollY <= 8;
+
+          if (!atTop) {
+            // Always jump fully to the very top (no smooth scrolling).
+            const doc = document.documentElement;
+            const body = document.body;
+            if (doc) doc.scrollTop = 0;
+            if (body) body.scrollTop = 0;
+            window.scrollTo(0, 0);
+
+            // Re-arm the "stay-on-page" behavior by keeping an extra history
+            // entry for the next Back while the user is scrolled down.
+            try {
+              history.pushState({ __scrollTopOnBack: true }, '', location.href);
+            } catch {
+              // Ignore.
+            }
+            return;
+          }
+
+          // Already at the top: allow leaving immediately.
+          // We may currently be inside the "duplicate" history entry created above,
+          // so we need to go back one more time to reach the real previous page.
+          isExiting = true;
+          history.back();
         });
       })();
     </script>
