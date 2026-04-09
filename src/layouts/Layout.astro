@@ -28,14 +28,17 @@ const { title } = Astro.props;
         }
 
         window.addEventListener('popstate', () => {
-          // Only intercept when not already at the top.
-          if ((window.scrollY || 0) > 8) {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            try {
-              history.pushState({ __scrollTopOnBack: true }, '', location.href);
-            } catch {
-              // Ignore.
-            }
+          // Always jump fully to the very top (no smooth scrolling).
+          const doc = document.documentElement;
+          const body = document.body;
+          if (doc) doc.scrollTop = 0;
+          if (body) body.scrollTop = 0;
+          window.scrollTo(0, 0);
+
+          try {
+            history.pushState({ __scrollTopOnBack: true }, '', location.href);
+          } catch {
+            // Ignore.
           }
         });
       })();
