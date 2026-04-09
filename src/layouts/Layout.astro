@@ -22,9 +22,22 @@ const { title } = Astro.props;
         // Mobile back-button / back-gesture handling:
         // - If scrolled down, pressing Back should jump to absolute top (0,0) and stay.
         // - If already at absolute top, pressing Back should leave normally.
+        //
+        // We achieve this by:
+        // 1. Pushing a duplicate history entry on load.
+        // 2. On Back (popstate), if scrolled down, scroll to top and push another
+        //    duplicate entry so the user remains on this page.
+        // 3. If already at top, we do nothing in the handler so a subsequent Back
+        //    leaves the page as usual.
+        try {
+          history.pushState({ __scrollTopOnBack: true }, '', location.href);
+        } catch {
+          // Ignore environments where history state is unavailable.
+        }
+
         window.addEventListener('popstate', () => {
           const scrollY = window.scrollY || 0;
-          const atTop = scrollY <= 8;
+          const atTop = scrollY <= 1;
 
           if (!atTop) {
             // Always jump fully to the very top (no smooth scrolling).
@@ -34,15 +47,14 @@ const { title } = Astro.props;
             if (body) body.scrollTop = 0;
             window.scrollTo(0, 0);
 
-            // Re-arm the "stay-on-page" behavior by keeping an extra history
-            // entry for the next Back while the user is scrolled down.
+            // Re-arm the "stay-on-page" behavior while user is scrolled down.
             try {
               history.pushState({ __scrollTopOnBack: true }, '', location.href);
             } catch {
               // Ignore.
             }
-            return;
           }
+          // If already at top, do nothing: normal back navigation proceeds.
         });
       })();
     </script>
