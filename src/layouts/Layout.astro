@@ -27,17 +27,35 @@ const { title } = Astro.props;
         // back/forward cache without re-running scripts. To keep behavior
         // consistent, we (re)initialize the handler on page show.
 
-        function initBackScrollHandler() {
-          if (window.__backScrollHandlerInitialized) return;
-          window.__backScrollHandlerInitialized = true;
+        function isArmed() {
+          const st = history.state;
+          return !!(st && typeof st === 'object' && st.__scrollTopOnBack === true);
+        }
 
+        function armIfNeeded() {
+          if (isArmed()) return;
           try {
             history.pushState({ __scrollTopOnBack: true }, '', location.href);
           } catch {
             // Ignore environments where history state is unavailable.
           }
+        }
+
+        function initBackScrollHandler() {
+          if (window.__backScrollHandlerInitialized) return;
+          window.__backScrollHandlerInitialized = true;
+
+          // Ensure we have a duplicate entry to intercept Back when scrolled.
+          armIfNeeded();
+
+          let skipping = false;
 
           window.addEventListener('popstate', () => {
+            if (skipping) {
+              skipping = false;
+              return;
+            }
+
             const scrollY = window.scrollY || 0;
             const atTop = scrollY <= 1;
 
@@ -50,18 +68,25 @@ const { title } = Astro.props;
               window.scrollTo(0, 0);
 
               // Re-arm the "stay-on-page" behavior while user is scrolled down.
-              try {
-                history.pushState({ __scrollTopOnBack: true }, '', location.href);
-              } catch {
-                // Ignore.
-              }
+              armIfNeeded();
+              return;
             }
-            // If already at top, do nothing: normal back navigation proceeds.
+
+            // At the very top: leave immediately (no "double back").
+            // If we're currently stepping from the armed duplicate entry to the
+            // original entry, go back one more time to actually leave.
+            if (isArmed()) {
+              skipping = true;
+              history.back();
+            }
           });
         }
 
         initBackScrollHandler();
         window.addEventListener('pageshow', () => {
+          // When restored from back/forward cache, scripts might not re-run.
+          // Re-arm the history entry in case we returned to an unarmed state.
+          armIfNeeded();
           initBackScrollHandler();
         });
       })();
