@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Layout from '../layouts/Layout.astro';
+import { getLqip } from '../lib/lqip';
 
 const imageExtensions = /\.(jpg|jpeg|png|gif|webp|avif)$/i;
 const videoExtensions = /\.(mp4|webm|ogg|mov)$/i;
@@ -60,9 +61,16 @@ for (const cat of categories) {
   galleryByCategory[cat.id] = getMediaFromFolder(cat.id);
   textByCategory[cat.id] = getCategoryTextFromFolder(cat.id);
 }
+
+const imageSrcs = categories.flatMap((cat) =>
+  galleryByCategory[cat.id].filter((item) => item.kind === 'image').map((item) => item.src),
+);
+const previewBySrc: Record<string, string> = Object.fromEntries(
+  await Promise.all(imageSrcs.map(async (src) => [src, await getLqip(src)] as const)),
+);
 ---
 
-<Layout title="Häkelei">
+<Layout title="Häkelei" backBehavior="none">
   <main class="home">
     <nav class="menu">
       {categories.map((cat) => (
@@ -95,7 +103,13 @@ for (const cat of categories) {
               {galleryByCategory[cat.id].map((item) => (
                 item.kind === 'image' ? (
                   <button type="button" class="gallery-item" data-src={item.src} title="Vergrößern">
-                    <img src={item.src} alt="" loading="lazy" decoding="async" />
+                    <img
+                      src={item.src}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      style={`background-image: url('${previewBySrc[item.src]}');`}
+                    />
                   </button>
                 ) : (
                   <div class="gallery-item gallery-video-wrap">
@@ -123,6 +137,10 @@ for (const cat of categories) {
   <div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="Bild vergrößert">
     <button type="button" class="lightbox-close" aria-label="Schließen">&times;</button>
     <img class="lightbox-img" src="" alt="" />
+  </div>
+
+  <div id="backHint" class="back-hint" role="status" aria-live="polite" hidden>
+    Noch einmal zurück, um die Seite zu verlassen
   </div>
 
   <script>
@@ -189,32 +207,102 @@ for (const cat of categories) {
       });
     }
 
+    const initialCategory =
+      (document.querySelector('.menu-btn[aria-pressed="true"]') as HTMLButtonElement | null)?.dataset.category ??
+      'spotlight';
+    let activeCategory = initialCategory;
+
+    function applyCategory(category: string) {
+      activeCategory = category;
+
+      document.querySelectorAll('.menu-btn').forEach((b) => {
+        b.setAttribute('aria-pressed', String((b as HTMLElement).dataset.category === category));
+      });
+
+      document.querySelectorAll('.gallery-panel').forEach((panel) => {
+        (panel as HTMLElement).hidden = (panel as HTMLElement).dataset.category !== category;
+      });
+
+      syncCategoryVideoPlayback(category);
+      void ensureCategoryText(category);
+    }
+
+    function categoryFromState(state: unknown): string | null {
+      if (state && typeof state === 'object' && 'hkCategory' in state) {
+        const value = (state as { hkCategory?: unknown }).hkCategory;
+        if (typeof value === 'string') return value;
+      }
+      return null;
+    }
+
+    const backHint = document.getElementById('backHint');
+    let backHintHideTimer: ReturnType<typeof setTimeout> | undefined;
+    let backHintRemoveTimer: ReturnType<typeof setTimeout> | undefined;
+    let exitArmedUntil = 0;
+
+    function showBackHint() {
+      if (!backHint) return;
+      if (backHintHideTimer) clearTimeout(backHintHideTimer);
+      if (backHintRemoveTimer) clearTimeout(backHintRemoveTimer);
+
+      backHint.hidden = false;
+      requestAnimationFrame(() => backHint.classList.add('is-visible'));
+
+      backHintHideTimer = setTimeout(() => {
+        backHint.classList.remove('is-visible');
+        backHintRemoveTimer = setTimeout(() => {
+          backHint.hidden = true;
+        }, 200);
+      }, 2000);
+    }
+
+    history.replaceState({ hkBase: true }, '', location.href);
+    history.pushState({ hkCategory: initialCategory }, '', location.href);
+
     document.querySelectorAll('.menu-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         const category = (btn as HTMLButtonElement).dataset.category;
-        if (!category) return;
+        if (!category || categoryFromState(history.state) === category) return;
 
-        document.querySelectorAll('.menu-btn').forEach((b) => b.setAttribute('aria-pressed', 'false'));
-        btn.setAttribute('aria-pressed', 'true');
-
-        document.querySelectorAll('.gallery-panel').forEach((panel) => {
-          (panel as HTMLElement).hidden = (panel as HTMLElement).dataset.category !== category;
-        });
-
-        syncCategoryVideoPlayback(category);
-        void ensureCategoryText(category);
+        history.pushState({ hkCategory: category }, '', location.href);
+        applyCategory(category);
       });
     });
 
-    syncCategoryVideoPlayback('spotlight');
-    void ensureCategoryText('spotlight');
+    window.addEventListener('popstate', (event) => {
+      const category = categoryFromState(event.state);
+      if (category) {
+        applyCategory(category);
+        return;
+      }
+
+      const now = Date.now();
+      if (now < exitArmedUntil) {
+        exitArmedUntil = 0;
+        setTimeout(() => history.back(), 0);
+        return;
+      }
+
+      exitArmedUntil = now + 2000;
+      showBackHint();
+      setTimeout(() => {
+        history.pushState({ hkCategory: activeCategory }, '', location.href);
+      }, 0);
+    });
+
+    window.addEventListener('pageshow', () => {
+      exitArmedUntil = 0;
+    });
+
+    applyCategory(initialCategory);
 
     const lightbox = document.getElementById('lightbox');
     const lightboxImg = lightbox?.querySelector('.lightbox-img') as HTMLImageElement;
     const lightboxClose = lightbox?.querySelector('.lightbox-close');
 
-    function openLightbox(src: string) {
+    function openLightbox(src: string, preview?: string) {
       if (!lightbox || !lightboxImg) return;
+      lightboxImg.style.backgroundImage = preview ?? '';
       lightboxImg.src = src;
       lightbox.hidden = false;
       document.body.style.overflow = 'hidden';
@@ -225,12 +313,17 @@ for (const cat of categories) {
       if (!lightbox) return;
       lightbox.hidden = true;
       document.body.style.overflow = '';
+      if (lightboxImg) {
+        lightboxImg.src = '';
+        lightboxImg.style.backgroundImage = '';
+      }
     }
 
     document.querySelectorAll('.gallery-item').forEach((btn) => {
       btn.addEventListener('click', () => {
         const src = (btn as HTMLButtonElement).dataset.src;
-        if (src) openLightbox(src);
+        const preview = (btn.querySelector('img') as HTMLImageElement | null)?.style.backgroundImage;
+        if (src) openLightbox(src, preview);
       });
     });
 
@@ -336,6 +429,9 @@ for (const cat of categories) {
       width: 100%;
       height: 100%;
       object-fit: cover;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
       transition: transform 0.2s ease;
     }
 
@@ -375,6 +471,9 @@ for (const cat of categories) {
       max-width: 100%;
       max-height: 100%;
       object-fit: contain;
+      background-size: contain;
+      background-position: center;
+      background-repeat: no-repeat;
       cursor: default;
     }
 
@@ -399,6 +498,33 @@ for (const cat of categories) {
 
     .lightbox-close:hover {
       background: rgba(255, 255, 255, 0.35);
+    }
+
+    .back-hint {
+      position: fixed;
+      left: 50%;
+      bottom: 4.5rem;
+      z-index: 10000;
+      max-width: calc(100% - 2rem);
+      padding: 0.6rem 1rem;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      font-size: 0.9rem;
+      text-align: center;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 0.5rem);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .back-hint.is-visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    .back-hint[hidden] {
+      display: none !important;
     }
 
 
