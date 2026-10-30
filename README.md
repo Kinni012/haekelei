@@ -1,4 +1,4 @@
-# Haeckelei
+# Häkelei
 
 Eine Website gebaut mit [Astro](https://astro.build).
 
